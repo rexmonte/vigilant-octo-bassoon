@@ -37,9 +37,9 @@ def _get(url: str, headers: Dict[str, str] | None = None, timeout: int = 10) -> 
 
 
 def check_anthropic() -> Tuple[bool, str]:
-    token = os.getenv('ANTHROPIC_API_KEY', '').strip()
+    token = os.getenv('ANTHROPIC_SESSION_TOKEN', '').strip()
     if not token:
-        return False, 'Missing ANTHROPIC_API_KEY'
+        return False, 'Missing ANTHROPIC_SESSION_TOKEN'
     ok, msg, _ = _get(
         'https://api.anthropic.com/v1/models',
         headers={
@@ -49,8 +49,8 @@ def check_anthropic() -> Tuple[bool, str]:
         timeout=12,
     )
     if ok:
-        return True, 'Anthropic API key accepted by /v1/models'
-    return False, f'Anthropic check failed ({msg}). Check key and account access.'
+        return True, 'Anthropic token accepted by /v1/models'
+    return False, f'Anthropic check failed ({msg}). If using subscription-session token only, validate via OpenClaw bridge.'
 
 
 def check_google() -> Tuple[bool, str]:

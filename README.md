@@ -1,121 +1,88 @@
-# OpenClaw Mac Mini Native Setup (No Pi)
+# ACE Migration Runtime (Pi ➜ M4 Mac mini)
 
-This repository is for a **single-machine** OpenClaw deployment on a Mac Mini M4.
-Everything runs natively on this Mac Mini. No Raspberry Pi involvement.
+This project now provides a production-oriented **model routing + fallback policy** for your migration with explicit support for:
 
-## Prerequisites
-- macOS
-- Git
-- Homebrew
-- Ollama
-- Python 3.9+
+- ACE primary on `claude-opus-4.6`
+- ACE optional swap to `claude-sonnet-4.6`
+- Worker-first local models via Ollama
+- Open Fall protocol: **degrade → log → notify**
 
-## Setup
+## Why this fixes your current instability
 
-1. Clone repository
+The repeated Discord error (`HTTP 404: model 'glm-4.7-flash' not found`) usually means a model ID/provider mismatch. This runtime prevents bad model IDs from being used at runtime by resolving through a strict catalog and role-specific fallback chains.
 
-```bash
-git clone https://github.com/rexmonte/vigilant-octo-bassoon.git
-cd vigilant-octo-bassoon
-```
+## Architecture (recommended)
 
-2. Create `.env`
+- **ACE role**
+  - Primary: `anthropic/claude-opus-4.6`
+  - Fallback 1: `anthropic/claude-sonnet-4.6`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
+  - Fallback 3: `ollama/llama-4-8b-instruct`
+- **Worker role**
+  - Primary: `ollama/llama-4-8b-instruct`
+  - Fallback 1: `ollama/mistral-small`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
+
+All role routing is defined in `config/providers.json`.
+
+## Quick start
+
+1. Copy environment template:
 
 ```bash
 cp .env.example .env
-nano .env
 ```
 
-Use these variables:
+2. Fill at least:
+
 - `ANTHROPIC_API_KEY`
-- `GOOGLE_API_KEY`
-- `OLLAMA_BASE_URL` (`http://127.0.0.1:11434`)
-- `DISCORD_BOT_TOKEN`
-- `DISCORD_ALERT_WEBHOOK`
+- `LOCAL_OPENAI_BASE_URL` (default points to local Ollama)
 
-3. Install dependencies
+3. Run preflight:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python3 scripts/resolve_model.py --preflight
 ```
 
-4. Pull Ollama models
-
-```bash
-ollama pull qwen3:14b
-ollama pull qwen2.5-coder:14b
-```
-
-5. Run preflight
-
-```bash
-python3 scripts/preflight.py
-```
-
-6. Resolve model targets
+4. Resolve ACE role:
 
 ```bash
 python3 scripts/resolve_model.py --role ace
+```
+
+5. Resolve worker role:
+
+```bash
 python3 scripts/resolve_model.py --role worker
 ```
 
-## Provider Tiers and Fallbacks
+## Docker runtime for local fallback
 
-### Tier 1: Anthropic
-- `claude-opus-4-6` (primary)
-- `claude-sonnet-4` (fallback)
-- `claude-haiku-4-5` (emergency)
-
-### Tier 2: Google Gemini
-- `gemini-2.5-pro`
-
-### Tier 3: Ollama (local)
-- `qwen3:14b`
-- `qwen2.5-coder:14b`
-
-### Open Fall chain
-- ACE: Opus → Sonnet → Gemini → local (`qwen3:14b`)
-- Worker: `qwen3:14b` → `qwen2.5-coder:14b` → Gemini → Haiku
-
-If all tiers fail: send Discord alert, pause queue, and log to file.
-
-## Troubleshooting (from your exact terminal output)
-
-### `git pull origin main` says `Already up to date`
-That means your local checkout already has the latest commit from `origin/main`.
-To verify exactly what commit you're on:
+Start local services:
 
 ```bash
-git rev-parse --short HEAD
-git log --oneline -n 3
+docker compose up -d
 ```
 
-If GitHub web UI still looks different, hard-refresh browser and confirm you are viewing the `main` branch.
+Then pull a model into Ollama (example):
 
-### `/Users/clawdrex/.openclaw/completions/openclaw.zsh:...: command not found: compdef`
-This usually means a Zsh completion file is being sourced in a shell context where Zsh completion isn't initialized.
-
-Fix options:
-
-1. Ensure you're using Zsh login shell:
 ```bash
-echo $SHELL
+docker exec -it ace-ollama ollama pull llama-4-8b-instruct
 ```
 
-2. In `~/.zshrc`, initialize completion before loading OpenClaw completions:
-```bash
-autoload -Uz compinit
-compinit
-```
+## Integration point in your bot
 
-3. Guard OpenClaw completion loading so it only runs when `compdef` exists:
-```bash
-command -v compdef >/dev/null && source ~/.openclaw/completions/openclaw.zsh
-```
+Before every LLM call:
 
-After edits:
-```bash
-source ~/.zshrc
-```
+1. Resolve role model via `resolve_runtime_model(role="ace")` or `resolve_runtime_model(role="worker")`.
+2. Call the chosen provider/model.
+3. On upstream failure, re-resolve and route to fallback.
+4. If all fail, execute Open Fall protocol (degrade queue, log, Discord webhook alert).
+
+## Files
+
+- `src/model_router.py`: role-aware resolver + environment preflight
+- `scripts/resolve_model.py`: CLI for resolution/preflight
+- `config/providers.json`: provider catalog + role routing + Open Fall settings
+- `docker-compose.yml`: Ollama + Qdrant baseline stack for macOS
+- `.env.example`: minimal env template
