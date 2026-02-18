@@ -1,0 +1,13 @@
+{
+  "ace": {
+    "role": "ace",
+    "interface": "discord",
+    "description": "Primary orchestrator. User-facing agent."
+  },
+  "workers": [
+    {"name": "research", "role": "worker", "specialty": "web research"},
+    {"name": "coder", "role": "worker", "specialty": "coding and debugging"},
+    {"name": "sysadmin", "role": "worker", "specialty": "ops and monitoring"},
+    {"name": "writer", "role": "worker", "specialty": "summaries and drafting"}
+  ]
+}
