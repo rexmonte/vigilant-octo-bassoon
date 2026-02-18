@@ -1,96 +1,104 @@
 #!/usr/bin/env python3
-"""CLI wrapper for model resolution checks and preflight validation."""
+"""CLI for preflight validation and role-based model resolution."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.model_router import (
+from src.model_router import (  # noqa: E402
     ModelResolutionError,
+    configure_logging,
     resolve_runtime_model,
     validate_environment,
 )
 
 
+def _load_local_env() -> None:
+    """Best-effort .env loader without extra dependencies."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Resolve a model from role policy and fallback chain."
-    )
-    parser.add_argument(
-        "--role",
-        choices=["ace", "worker"],
-        default=None,
-        help="Role to resolve using config roles.",
-    )
-    parser.add_argument("--provider", help="Requested provider name")
-    parser.add_argument("--model", help="Requested model name")
-    parser.add_argument(
-        "--preflight",
-        action="store_true",
-        help="Run environment preflight checks.",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Print machine-readable JSON output.",
-    )
+    parser = argparse.ArgumentParser(description="OpenClaw model routing utility")
+    parser.add_argument("--role", choices=["ace", "worker"], help="Role to resolve", default=None)
+    parser.add_argument("--provider", help="Optional explicit provider")
+    parser.add_argument("--model", help="Optional explicit model")
+    parser.add_argument("--preflight", action="store_true", help="Run startup preflight checks")
+    parser.add_argument("--json", action="store_true", help="Print JSON output")
     return parser.parse_args()
 
 
 def main() -> int:
+    _load_local_env()
+    configure_logging()
+    log = logging.getLogger("resolve_model")
     args = parse_args()
 
     if args.preflight:
-        issues = validate_environment()
+        failures = validate_environment()
+        payload = {"ok": len(failures) == 0, "failures": failures}
         if args.json:
-            print(json.dumps({"ok": len(issues) == 0, "issues": issues}, indent=2))
+            print(json.dumps(payload, indent=2))
         else:
-            if issues:
-                print("PREFLIGHT FAIL")
-                for issue in issues:
-                    print(f"- {issue}")
+            if payload["ok"]:
+                print("PREFLIGHT OK: startup checks passed.")
             else:
-                print("PREFLIGHT OK")
-        return 0 if len(issues) == 0 else 1
+                print("PREFLIGHT FAILED:")
+                for failure in failures:
+                    print(f"- {failure}")
+        return 0 if payload["ok"] else 1
 
     if (args.provider and not args.model) or (args.model and not args.provider):
-        print("If using explicit model selection, provide both --provider and --model.")
+        print("ERROR: Provide both --provider and --model when using explicit selection.")
         return 2
 
     try:
-        result = resolve_runtime_model(
+        resolved = resolve_runtime_model(
             role=args.role,
             requested_provider=args.provider,
             requested_model=args.model,
         )
     except ModelResolutionError as exc:
+        log.error("Resolution failed: %s", exc)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
             print(f"ERROR: {exc}")
         return 1
 
-    payload = {
+    output = {
         "ok": True,
-        "provider": result.provider,
-        "model": result.model,
-        "source": "fallback" if result.from_fallback else "primary/requested",
-        "role": result.role,
+        "role": resolved.role,
+        "provider": resolved.provider,
+        "model": resolved.model,
+        "source": resolved.source,
+        "retry_count": int(os.getenv("FALLBACK_RETRY_COUNT", "3")),
     }
 
     if args.json:
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(output, indent=2))
     else:
         print(
-            "OK: "
-            f"{result.provider}/{result.model} "
-            f"(role={result.role}, source={payload['source']})"
+            "RESOLVED: "
+            f"role={output['role']} provider={output['provider']} "
+            f"model={output['model']} source={output['source']}"
         )
+
     return 0
 
 

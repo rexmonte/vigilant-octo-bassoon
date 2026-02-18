@@ -1,13 +1,15 @@
-"""Model/provider resolution with role-aware fallbacks and preflight checks."""
+"""Production model router for Anthropic -> Gemini -> Ollama fallback routing."""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 
 CONFIG_PATH = Path("config/providers.json")
 
@@ -16,12 +18,24 @@ CONFIG_PATH = Path("config/providers.json")
 class ResolvedModel:
     provider: str
     model: str
-    from_fallback: bool = False
-    role: Optional[str] = None
+    role: str
+    source: str
 
 
 class ModelResolutionError(RuntimeError):
     pass
+
+
+class PreflightError(RuntimeError):
+    pass
+
+
+def configure_logging() -> None:
+    log_level = os.getenv("LOG_LEVEL", "info").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
 
 def load_config(path: Path = CONFIG_PATH) -> Dict:
@@ -38,56 +52,96 @@ def _provider_cfg(config: Dict, provider: str) -> Optional[Dict]:
     return config.get("providers", {}).get(provider)
 
 
-def _model_available(config: Dict, provider: str, model: str) -> bool:
+def _is_model_enabled(config: Dict, provider: str, model: str) -> bool:
     provider_cfg = _provider_cfg(config, provider)
-    if not provider_cfg:
-        return False
-    if not provider_cfg.get("enabled", False):
+    if not provider_cfg or not provider_cfg.get("enabled", False):
         return False
     return model in provider_cfg.get("models", [])
 
 
-def _role_plan(config: Dict, role: str) -> Tuple[Tuple[str, str], List[Tuple[str, str]]]:
+def _check_ollama_connectivity(base_url: str, timeout: int) -> Optional[str]:
+    url = f"{base_url.rstrip('/')}/api/tags"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if response.status != 200:
+                return f"Ollama returned HTTP {response.status}"
+    except urllib.error.URLError as exc:
+        return f"Cannot connect to Ollama at {base_url}: {exc.reason}"
+    except TimeoutError:
+        return f"Cannot connect to Ollama at {base_url}: connection timed out"
+    return None
+
+
+def _candidate_chain(config: Dict, role: str) -> List[Tuple[str, str]]:
     role_cfg = config.get("roles", {}).get(role)
     if not role_cfg:
-        raise ModelResolutionError(f"Unknown role: {role}")
+        raise ModelResolutionError(f"Unknown role '{role}'. Check config/providers.json roles.")
 
+    chain: List[Tuple[str, str]] = []
     primary = role_cfg.get("primary", {})
-    provider = primary.get("provider")
-    model = primary.get("model")
-    if not provider or not model:
-        raise ModelResolutionError(f"Role '{role}' is missing a valid primary model.")
+    if not primary.get("provider") or not primary.get("model"):
+        raise ModelResolutionError(f"Role '{role}' missing primary provider/model.")
 
-    fallbacks: List[Tuple[str, str]] = []
-    for item in role_cfg.get("fallbacks", []):
-        fallback_provider = item.get("provider")
-        fallback_model = item.get("model")
-        if fallback_provider and fallback_model:
-            fallbacks.append((fallback_provider, fallback_model))
+    chain.append((primary["provider"], primary["model"]))
 
-    return (provider, model), fallbacks
+    for fallback in role_cfg.get("fallbacks", []):
+        provider = fallback.get("provider")
+        model = fallback.get("model")
+        if provider and model:
+            chain.append((provider, model))
 
-
-def _default_role(config: Dict) -> Optional[str]:
-    return os.getenv("DEFAULT_LLM_ROLE") or config.get("defaults", {}).get("role")
+    return chain
 
 
-def _iter_candidates(
-    config: Dict,
-    role: Optional[str],
-    requested_provider: Optional[str],
-    requested_model: Optional[str],
-) -> Tuple[Tuple[str, str], List[Tuple[str, str]]]:
-    if requested_provider and requested_model:
-        role_name = role or _default_role(config) or "ace"
-        _, role_fallbacks = _role_plan(config, role_name)
-        return (requested_provider, requested_model), role_fallbacks
+def validate_environment(config: Optional[Dict] = None) -> List[str]:
+    cfg = config or load_config()
+    failures: List[str] = []
 
-    role_name = role or _default_role(config)
-    if not role_name:
-        raise ModelResolutionError("No role selected and no defaults.role configured.")
+    required_envs = [
+        "ANTHROPIC_TOKEN",
+        "GOOGLE_API_KEY",
+        "OLLAMA_BASE_URL",
+        "DISCORD_BOT_TOKEN",
+        "DISCORD_GUILD_ID",
+        "INFERENCE_TIMEOUT",
+        "FALLBACK_RETRY_COUNT",
+    ]
 
-    return _role_plan(config, role_name)
+    for env_name in required_envs:
+        if not os.getenv(env_name):
+            failures.append(f"Missing required environment variable: {env_name}")
+
+    providers = cfg.get("providers", {})
+    timeout = int(os.getenv("INFERENCE_TIMEOUT", "10"))
+    for provider_name, provider_cfg in providers.items():
+        if not provider_cfg.get("enabled", False):
+            continue
+
+        for auth_env in provider_cfg.get("auth_env", []):
+            if not os.getenv(auth_env):
+                failures.append(
+                    f"Provider '{provider_name}' requires env '{auth_env}', but it is missing."
+                )
+
+        base_url_env = provider_cfg.get("base_url_env")
+        if base_url_env:
+            base_url = os.getenv(base_url_env)
+            if not base_url:
+                failures.append(
+                    f"Provider '{provider_name}' requires env '{base_url_env}', but it is missing."
+                )
+            elif provider_name == "ollama":
+                err = _check_ollama_connectivity(base_url=base_url, timeout=timeout)
+                if err:
+                    failures.append(err)
+
+    for role_name in cfg.get("roles", {}):
+        try:
+            _candidate_chain(cfg, role_name)
+        except ModelResolutionError as exc:
+            failures.append(str(exc))
+
+    return failures
 
 
 def resolve_runtime_model(
@@ -95,68 +149,77 @@ def resolve_runtime_model(
     requested_provider: Optional[str] = None,
     requested_model: Optional[str] = None,
     config: Optional[Dict] = None,
+    logger: Optional[logging.Logger] = None,
 ) -> ResolvedModel:
     cfg = config or load_config()
+    log = logger or logging.getLogger("model_router")
+    selected_role = role or cfg.get("defaults", {}).get("role", "ace")
 
-    primary, fallbacks = _iter_candidates(cfg, role, requested_provider, requested_model)
-    provider, model = primary
-
-    effective_role = role or _default_role(cfg)
-
-    if _model_available(cfg, provider, model):
-        return ResolvedModel(provider=provider, model=model, role=effective_role)
-
-    for fallback_provider, fallback_model in fallbacks:
-        if _model_available(cfg, fallback_provider, fallback_model):
-            return ResolvedModel(
-                provider=fallback_provider,
-                model=fallback_model,
-                from_fallback=True,
-                role=effective_role,
+    if requested_provider and requested_model:
+        if _is_model_enabled(cfg, requested_provider, requested_model):
+            log.info(
+                "Resolved model | role=%s provider=%s model=%s source=explicit",
+                selected_role,
+                requested_provider,
+                requested_model,
             )
+            return ResolvedModel(requested_provider, requested_model, selected_role, "explicit")
+
+        log.warning(
+            "Explicit model unavailable | role=%s provider=%s model=%s. Falling back.",
+            selected_role,
+            requested_provider,
+            requested_model,
+        )
+
+    for idx, (provider, model) in enumerate(_candidate_chain(cfg, selected_role)):
+        source = "primary" if idx == 0 else f"fallback_{idx}"
+        if _is_model_enabled(cfg, provider, model):
+            log.info(
+                "Resolved model | role=%s provider=%s model=%s source=%s",
+                selected_role,
+                provider,
+                model,
+                source,
+            )
+            return ResolvedModel(provider, model, selected_role, source)
 
     raise ModelResolutionError(
-        f"Requested model unavailable ({provider}/{model}) and no valid fallback found."
+        f"No available model for role '{selected_role}'. Check provider enablement and model IDs."
     )
 
 
-def _has_any_env(env_keys: List[str]) -> bool:
-    return any(bool(os.getenv(key)) for key in env_keys)
-
-
-def validate_environment(config: Optional[Dict] = None) -> List[str]:
-    """Return a list of preflight issues; empty list means healthy enough to boot."""
+def resolve_with_retry(
+    role: str,
+    error_reason: str,
+    tried: Optional[List[Tuple[str, str]]] = None,
+    config: Optional[Dict] = None,
+    logger: Optional[logging.Logger] = None,
+) -> ResolvedModel:
     cfg = config or load_config()
-    issues: List[str] = []
+    log = logger or logging.getLogger("model_router")
+    tried_set = set(tried or [])
 
-    providers = cfg.get("providers", {})
-    for provider_name, provider_cfg in providers.items():
-        if not provider_cfg.get("enabled", False):
+    for provider, model in _candidate_chain(cfg, role):
+        if (provider, model) in tried_set:
             continue
-
-        key_env = provider_cfg.get("requires_key_env")
-        if key_env and not os.getenv(key_env):
-            issues.append(
-                f"Provider '{provider_name}' enabled but missing env '{key_env}'."
+        if _is_model_enabled(cfg, provider, model):
+            log.warning(
+                "Retrying with fallback | role=%s provider=%s model=%s reason=%s",
+                role,
+                provider,
+                model,
+                error_reason,
             )
+            return ResolvedModel(provider, model, role, "retry_fallback")
 
-        any_env = provider_cfg.get("requires_any_env", [])
-        if any_env and not _has_any_env(any_env):
-            joined = ", ".join(any_env)
-            issues.append(
-                f"Provider '{provider_name}' enabled but missing all auth envs [{joined}]."
-            )
+    raise ModelResolutionError(
+        f"All fallback models exhausted for role '{role}'. Last error: {error_reason}"
+    )
 
-        base_url_env = provider_cfg.get("base_url_env")
-        if base_url_env and not os.getenv(base_url_env):
-            issues.append(
-                f"Provider '{provider_name}' enabled but missing env '{base_url_env}'."
-            )
 
-    for role_name in cfg.get("roles", {}):
-        try:
-            resolve_runtime_model(role=role_name, config=cfg)
-        except ModelResolutionError as exc:
-            issues.append(f"Role '{role_name}' failed resolution: {exc}")
-
-    return issues
+def run_preflight_or_raise(config: Optional[Dict] = None) -> None:
+    failures = validate_environment(config=config)
+    if failures:
+        message = "Preflight failed:\n- " + "\n- ".join(failures)
+        raise PreflightError(message)

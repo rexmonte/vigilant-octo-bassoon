@@ -2,11 +2,8 @@
   "providers": {
     "anthropic": {
       "enabled": true,
-      "requires_any_env": [
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN"
-      ],
       "api": "anthropic-messages",
+      "auth_env": ["ANTHROPIC_TOKEN"],
       "models": [
         "claude-opus-4-6",
         "claude-sonnet-4",
@@ -15,94 +12,45 @@
     },
     "google": {
       "enabled": true,
-      "requires_any_env": [
-        "GOOGLE_API_KEY"
-      ],
       "api": "google-generative-ai",
+      "auth_env": ["GOOGLE_API_KEY"],
       "models": [
         "gemini-2.5-pro"
       ]
     },
     "ollama": {
       "enabled": true,
-      "requires_key_env": null,
-      "base_url_env": "LOCAL_OPENAI_BASE_URL",
       "api": "openai-chat-completions",
+      "base_url_env": "OLLAMA_BASE_URL",
       "models": [
+        "qwen3:14b",
+        "qwen2.5-coder:14b",
         "qwen3-30b-a3b",
-        "gemma3-27b",
-        "llama-4-8b-instruct",
-        "mistral-small"
-      ]
-    },
-    "zhipu": {
-      "enabled": false,
-      "requires_key_env": "ZHIPU_API_KEY",
-      "api": "openai-chat-completions",
-      "models": [
-        "glm-4.6",
-        "glm-4.5-air"
+        "gemma3-27b"
       ]
     }
   },
   "roles": {
     "ace": {
-      "primary": {
-        "provider": "anthropic",
-        "model": "claude-opus-4-6"
-      },
+      "description": "Main orchestrator agent",
+      "primary": {"provider": "anthropic", "model": "claude-opus-4-6"},
       "fallbacks": [
-        {
-          "provider": "anthropic",
-          "model": "claude-sonnet-4"
-        },
-        {
-          "provider": "google",
-          "model": "gemini-2.5-pro"
-        },
-        {
-          "provider": "ollama",
-          "model": "qwen3-30b-a3b"
-        },
-        {
-          "provider": "anthropic",
-          "model": "claude-haiku-4-5"
-        }
+        {"provider": "anthropic", "model": "claude-sonnet-4"},
+        {"provider": "google", "model": "gemini-2.5-pro"},
+        {"provider": "ollama", "model": "qwen3:14b"}
       ]
     },
     "worker": {
-      "primary": {
-        "provider": "ollama",
-        "model": "qwen3-30b-a3b"
-      },
+      "description": "Subordinate worker agents",
+      "primary": {"provider": "ollama", "model": "qwen3:14b"},
       "fallbacks": [
-        {
-          "provider": "ollama",
-          "model": "gemma3-27b"
-        },
-        {
-          "provider": "ollama",
-          "model": "mistral-small"
-        },
-        {
-          "provider": "anthropic",
-          "model": "claude-haiku-4-5"
-        }
+        {"provider": "ollama", "model": "qwen2.5-coder:14b"},
+        {"provider": "google", "model": "gemini-2.5-pro"},
+        {"provider": "anthropic", "model": "claude-haiku-4-5"}
       ]
     }
   },
   "defaults": {
     "role": "ace"
-  },
-  "open_fall": {
-    "strategy": "degrade_log_notify_hold_queue",
-    "discord_webhook_env": "DISCORD_ALERT_WEBHOOK",
-    "queue_non_critical_tasks": true,
-    "hold_queue_on_total_failure": true,
-    "triage_mode_message": "Inference degraded. Queue is being held until providers recover.",
-    "local_reflex_model": {
-      "provider": "ollama",
-      "model": "llama-4-8b-instruct"
-    }
   }
 }

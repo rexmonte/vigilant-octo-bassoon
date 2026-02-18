@@ -1,0 +1,2 @@
+# Standard-library-only runtime by default.
+# Add provider SDKs here later if you integrate direct API call clients.
