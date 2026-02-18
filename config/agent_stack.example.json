@@ -1,0 +1,45 @@
+{
+  "hardware_profile": {
+    "machine": "Mac mini M4",
+    "ram_gb": 32,
+    "notes": "Balanced for orchestration + local fallback inference"
+  },
+  "ace_orchestrator": {
+    "provider": "anthropic",
+    "model": "claude-3-7-sonnet-latest",
+    "max_tokens": 4096,
+    "temperature": 0.2,
+    "timeout_s": 60
+  },
+  "worker_defaults": {
+    "provider": "openai_local",
+    "model": "qwen2.5:7b-instruct",
+    "max_tokens": 2048,
+    "temperature": 0.3,
+    "timeout_s": 45
+  },
+  "routing": {
+    "code": {
+      "provider": "anthropic",
+      "model": "claude-3-7-sonnet-latest"
+    },
+    "research": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet-latest"
+    },
+    "ops": {
+      "provider": "openai_local",
+      "model": "llama3.1:8b"
+    },
+    "fallback": {
+      "provider": "openai_local",
+      "model": "llama3.1:8b"
+    }
+  },
+  "reliability": {
+    "max_retries": 2,
+    "backoff_ms": 800,
+    "circuit_breaker_failures": 5,
+    "health_check_interval_s": 30
+  }
+}

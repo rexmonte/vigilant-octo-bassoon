@@ -1,4 +1,4 @@
-"""Model/provider resolution with strict validation and fallback support."""
+"""Model/provider resolution with strict validation, aliases, and fallbacks."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class ResolvedModel:
 
 
 class ModelResolutionError(RuntimeError):
-    pass
+    """Raised when model selection cannot produce a valid provider/model pair."""
 
 
 def load_config(path: Path = CONFIG_PATH) -> Dict:
@@ -51,6 +51,26 @@ def _fallback_candidates(config: Dict) -> List[Tuple[str, str]]:
     return candidates
 
 
+def _resolve_alias(
+    config: Dict,
+    provider: Optional[str],
+    model: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve model alias from config.aliases.<name> = {provider, model}."""
+    if provider or not model:
+        return provider, model
+
+    alias_cfg = config.get("aliases", {}).get(model)
+    if not alias_cfg:
+        return provider, model
+
+    alias_provider = alias_cfg.get("provider")
+    alias_model = alias_cfg.get("model")
+    if alias_provider and alias_model:
+        return alias_provider, alias_model
+    return provider, model
+
+
 def resolve_runtime_model(
     requested_provider: Optional[str] = None,
     requested_model: Optional[str] = None,
@@ -58,13 +78,16 @@ def resolve_runtime_model(
 ) -> ResolvedModel:
     cfg = config or load_config()
 
-    provider = requested_provider or cfg.get("defaults", {}).get("provider")
-    model = requested_model or cfg.get("defaults", {}).get("model")
+    provider = requested_provider
+    model = requested_model
+
+    provider, model = _resolve_alias(cfg, provider, model)
+
+    provider = provider or cfg.get("defaults", {}).get("provider")
+    model = model or cfg.get("defaults", {}).get("model")
 
     if not provider or not model:
-        raise ModelResolutionError(
-            "No requested model and no defaults configured."
-        )
+        raise ModelResolutionError("No requested model and no defaults configured.")
 
     if _model_available(cfg, provider, model):
         return ResolvedModel(provider=provider, model=model)

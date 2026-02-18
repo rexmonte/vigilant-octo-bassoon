@@ -24,6 +24,20 @@
       "enabled": false
     }
   },
+  "aliases": {
+    "ace-primary": {
+      "provider": "anthropic",
+      "model": "claude-3-7-sonnet-latest"
+    },
+    "ace-cheap": {
+      "provider": "anthropic",
+      "model": "claude-3-5-haiku-latest"
+    },
+    "worker-local": {
+      "provider": "openai_local",
+      "model": "qwen2.5:7b-instruct"
+    }
+  },
   "defaults": {
     "provider": "anthropic",
     "model": "claude-3-7-sonnet-latest"

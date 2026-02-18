@@ -1,59 +1,76 @@
-# Discord Agent Migration Helper (Pi ➜ Mac mini)
+# OpenClaw / ACE Mac mini One-Shot Setup
 
-This repository contains a minimal, provider-agnostic model router to prevent runtime failures like:
+This project is now focused on **getting you stable fast** on your new **Mac mini M4 (32GB RAM)** with minimal troubleshooting.
+
+If your bot keeps dropping with errors like:
 
 - `HTTP 404: model 'glm-4.7-flash' not found`
 
-It is designed to help you migrate an existing Discord/ACE-style agent stack from a failed Raspberry Pi to a Mac mini and keep your bot online even when a configured model is invalid.
+this setup gives you guardrails, fallback routing, and a practical architecture for multi-agents.
 
-## What this solves
+## Recommended architecture (simple + reliable)
 
-- Validates provider/model combinations **before** your bot sends requests.
-- Adds a safe fallback chain (Anthropic first, local model second by default).
-- Lets you keep one logical model alias in your bot code while changing real providers/models in config.
+- **ACE (head/orchestrator):** Anthropic API (`claude-3-7-sonnet-latest`)
+- **Worker agents:** local models via Ollama (`qwen2.5:7b-instruct` default)
+- **Fallback chain:** Anthropic Haiku ➜ local `llama3.1:8b`
+- **Routing by task:** configured in `config/agent_stack.json`
 
-## Quick start
+This gives you strong reasoning at the top and low-cost local throughput for supporting agents.
 
-1. Copy the environment template:
+## One-shot bootstrap
 
-```bash
-cp .env.example .env
-```
-
-2. (Optional) edit provider defaults in `config/providers.json`.
-
-3. Resolve a model your bot wants to use:
+Run:
 
 ```bash
-python3 scripts/resolve_model.py --provider zhipu --model glm-4.7-flash
+python3 scripts/bootstrap_mac_mini.py
 ```
 
-If unavailable, the script exits non-zero and prints the configured fallback.
+This will:
 
-4. Ask for the configured default runtime model:
+1. Create `.env` from `.env.example` if missing.
+2. Create `config/agent_stack.json` from template if missing.
+3. Check core dependencies (`python3`, `git`, `ollama`).
+4. Show your recommended runtime routing.
+
+## Then do these 4 steps
+
+1. Add your API keys in `.env`.
+2. Start local runtime (`ollama serve`).
+3. Pull a local model (`ollama pull qwen2.5:7b-instruct`).
+4. Run the health check:
 
 ```bash
-python3 scripts/resolve_model.py --use-default
+python3 scripts/healthcheck.py
 ```
 
-## Integration pattern for your Discord bot
+## Key files
 
-Before making an LLM API call:
+- `config/providers.json` — provider/model catalog, aliases, defaults, fallback order
+- `config/agent_stack.example.json` — recommended multi-agent architecture for your hardware
+- `src/model_router.py` — strict resolver used before each LLM API call
+- `scripts/bootstrap_mac_mini.py` — one-shot machine bootstrap helper
+- `scripts/healthcheck.py` — operational validation to avoid surprises
 
-1. Load `.env`.
-2. Call `resolve_runtime_model()` from `src/model_router.py`.
-3. Use the returned provider/model in your API client.
-4. If resolution fails, surface an alert and/or switch to your local backup model.
+## Integration into your Discord bot
 
-## Suggested migration defaults
+Before every LLM call:
 
-- Primary: `anthropic/claude-3-7-sonnet-latest` (or newer Anthropic model you have access to)
-- Secondary fallback: local OpenAI-compatible endpoint (e.g., Ollama)
-- Only keep `glm-*` models enabled if your account and endpoint support them.
+1. Resolve provider/model via `resolve_runtime_model()`.
+2. Call the matching API client.
+3. If chosen model is unavailable, resolver auto-falls back.
+4. Log provider/model used for observability.
 
-## Files
+Example:
 
-- `src/model_router.py` — provider/model validation and fallback resolution
-- `scripts/resolve_model.py` — CLI smoke test helper for operations
-- `config/providers.json` — editable model catalog + fallback policy
-- `.env.example` — environment variables for your bot runtime
+```python
+from src.model_router import resolve_runtime_model
+
+choice = resolve_runtime_model(requested_model="ace-primary")
+# use choice.provider and choice.model in your client
+```
+
+## Why this is better than hardcoding a model string
+
+Hardcoded model names break migrations. This setup centralizes model policy, enables fallback, and gives you quick diagnostics before production calls.
+
+For your specific failure (`glm-4.7-flash` 404), the resolver now shifts to healthy configured models instead of letting ACE crash.
