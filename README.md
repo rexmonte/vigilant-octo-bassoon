@@ -1,135 +1,88 @@
-# OpenClaw Mac Mini Native Setup (No Pi)
+# ACE Migration Runtime (Pi ➜ M4 Mac mini)
 
-This repository is a clean, single-machine OpenClaw runtime for Scott's **Mac Mini M4 (32GB RAM)**.
-Everything runs on this one Mac Mini. No Raspberry Pi involvement.
+This project now provides a production-oriented **model routing + fallback policy** for your migration with explicit support for:
 
-## Prerequisites
+- ACE primary on `claude-opus-4.6`
+- ACE optional swap to `claude-sonnet-4.6`
+- Worker-first local models via Ollama
+- Open Fall protocol: **degrade → log → notify**
 
-- macOS on Mac Mini M4
-- Git
-- Homebrew
-- Ollama
-- Python 3.9+
+## Why this fixes your current instability
 
-Quick checks:
+The repeated Discord error (`HTTP 404: model 'glm-4.7-flash' not found`) usually means a model ID/provider mismatch. This runtime prevents bad model IDs from being used at runtime by resolving through a strict catalog and role-specific fallback chains.
 
-```bash
-git --version
-python3 --version
-brew --version
-ollama --version
-```
+## Architecture (recommended)
 
-## 1) Clone repository
+- **ACE role**
+  - Primary: `anthropic/claude-opus-4.6`
+  - Fallback 1: `anthropic/claude-sonnet-4.6`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
+  - Fallback 3: `ollama/llama-4-8b-instruct`
+- **Worker role**
+  - Primary: `ollama/llama-4-8b-instruct`
+  - Fallback 1: `ollama/mistral-small`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
 
-```bash
-git clone https://github.com/rexmonte/vigilant-octo-bassoon.git
-cd vigilant-octo-bassoon
-```
+All role routing is defined in `config/providers.json`.
 
-## 2) Create `.env` with secrets
+## Quick start
+
+1. Copy environment template:
 
 ```bash
 cp .env.example .env
-nano .env
 ```
 
-Required values:
+2. Fill at least:
 
-- `ANTHROPIC_SESSION_TOKEN` — Anthropic session token method
-- `GOOGLE_API_KEY` — Gemini 2.5 Pro API key
-- `OLLAMA_BASE_URL` — local endpoint (`http://127.0.0.1:11434`)
-- `DISCORD_BOT_TOKEN` — ACE Discord bot token
-- `DISCORD_WEBHOOK_URL` — used for Open Fall alerts when all providers fail
+- `ANTHROPIC_API_KEY`
+- `LOCAL_OPENAI_BASE_URL` (default points to local Ollama)
 
-## 3) Install dependencies
+3. Run preflight:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python3 scripts/resolve_model.py --preflight
 ```
 
-## 4) Pull local worker models
-
-```bash
-ollama pull qwen3:14b
-ollama pull qwen2.5-coder:14b
-```
-
-Optional local fallbacks:
-
-```bash
-ollama pull mistral-7b
-ollama pull llama2:13b
-```
-
-Upgrade path (smarter but heavier):
-
-```bash
-ollama pull qwen3-30b-a3b
-ollama pull gemma3-27b
-```
-
-## 5) Run preflight checks
-
-```bash
-python3 scripts/preflight.py
-```
-
-Preflight verifies:
-
-- Anthropic token presence + remote check
-- Google API key presence + remote check
-- Ollama connectivity + at least one model pulled
-- Discord bot token validity
-
-## 6) Resolve model targets
-
-ACE model resolution:
+4. Resolve ACE role:
 
 ```bash
 python3 scripts/resolve_model.py --role ace
 ```
 
-Worker model resolution:
+5. Resolve worker role:
 
 ```bash
 python3 scripts/resolve_model.py --role worker
 ```
 
-## 7) Integrate with OpenClaw on this Mac Mini
+## Docker runtime for local fallback
 
-Use `src/model_router.py` in your OpenClaw agent runtime:
+Start local services:
 
-- `resolve_model(role="ace")` for ACE orchestrator
-- `resolve_model(role="worker")` for worker tasks
+```bash
+docker compose up -d
+```
 
-If a model/provider fails, call `resolve_model(..., tried=[...])` pattern in your runtime loop and retry next fallback.
+Then pull a model into Ollama (example):
 
-## Tiered provider architecture
+```bash
+docker exec -it ace-ollama ollama pull llama-4-8b-instruct
+```
 
-1. **Tier 1 (Anthropic)**
-   - `claude-opus-4-6` (primary)
-   - `claude-sonnet-4` (fallback)
-   - `claude-haiku-4-5` (emergency)
-2. **Tier 2 (Google Gemini)**
-   - `gemini-2.5-pro` (sub-boss / credit-backed fallback)
-3. **Tier 3 (Ollama local)**
-   - `qwen3:14b` (primary worker)
-   - `qwen2.5-coder:14b` (coding)
-   - `mistral-7b` / `llama2:13b` (extra fallback)
-   - Upgrade path: `qwen3-30b-a3b`, `gemma3-27b`
+## Integration point in your bot
 
-### Open Fall protocol
+Before every LLM call:
 
-When all provider tiers fail:
+1. Resolve role model via `resolve_runtime_model(role="ace")` or `resolve_runtime_model(role="worker")`.
+2. Call the chosen provider/model.
+3. On upstream failure, re-resolve and route to fallback.
+4. If all fail, execute Open Fall protocol (degrade queue, log, Discord webhook alert).
 
-1. Send Discord webhook alert
-2. Pause queue
-3. Log details to file (`logs/model_router.log`)
+## Files
 
-## Local safety note
-
-Keep Ollama local-only on this machine (`127.0.0.1`) unless you intentionally expose it to a trusted LAN.
-Never expose Ollama to the public internet.
+- `src/model_router.py`: role-aware resolver + environment preflight
+- `scripts/resolve_model.py`: CLI for resolution/preflight
+- `config/providers.json`: provider catalog + role routing + Open Fall settings
+- `docker-compose.yml`: Ollama + Qdrant baseline stack for macOS
+- `.env.example`: minimal env template
