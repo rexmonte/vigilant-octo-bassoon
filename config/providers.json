@@ -1,0 +1,56 @@
+{
+  "providers": {
+    "anthropic": {
+      "enabled": true,
+      "auth_env": "ANTHROPIC_API_KEY",
+      "models": [
+        "claude-opus-4-6",
+        "claude-sonnet-4",
+        "claude-haiku-4-5"
+      ]
+    },
+    "google": {
+      "enabled": true,
+      "auth_env": "GOOGLE_API_KEY",
+      "models": [
+        "gemini-2.5-pro"
+      ]
+    },
+    "ollama": {
+      "enabled": true,
+      "base_url_env": "OLLAMA_BASE_URL",
+      "models": [
+        "qwen3:14b",
+        "qwen2.5-coder:14b"
+      ]
+    }
+  },
+  "roles": {
+    "ace": {
+      "primary": {"provider": "anthropic", "model": "claude-opus-4-6"},
+      "fallbacks": [
+        {"provider": "anthropic", "model": "claude-sonnet-4"},
+        {"provider": "google", "model": "gemini-2.5-pro"},
+        {"provider": "ollama", "model": "qwen3:14b"}
+      ]
+    },
+    "worker": {
+      "primary": {"provider": "ollama", "model": "qwen3:14b"},
+      "fallbacks": [
+        {"provider": "ollama", "model": "qwen2.5-coder:14b"},
+        {"provider": "google", "model": "gemini-2.5-pro"},
+        {"provider": "anthropic", "model": "claude-haiku-4-5"}
+      ]
+    }
+  },
+  "open_fall": {
+    "on_total_failure": [
+      "send_discord_alert",
+      "pause_queue",
+      "log_to_file"
+    ]
+  },
+  "defaults": {
+    "role": "ace"
+  }
+}
