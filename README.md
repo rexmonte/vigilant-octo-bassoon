@@ -70,6 +70,24 @@ Then pull a model into Ollama (example):
 docker exec -it ace-ollama ollama pull llama-4-8b-instruct
 ```
 
+## Start ACE in Discord chat
+
+After your `.env` is configured, run:
+
+```bash
+python3 scripts/run_discord_bot.py
+```
+
+By default, ACE responds when mentioned in a channel (`@YourBotName ...`).
+
+Optional Discord controls:
+
+- `ACE_ALLOWED_CHANNEL_IDS=123,456` to allow responses in specific channels without mention
+- `ACE_RESPOND_IN_ALL_CHANNELS=true` to answer in every channel the bot can read
+
+> Note: `scripts/preflight.py` validates API credentials for Anthropic/Google/Discord Bot token.
+> `scripts/resolve_model.py --preflight` validates model-router env wiring and role routing.
+
 ## Integration point in your bot
 
 Before every LLM call:
