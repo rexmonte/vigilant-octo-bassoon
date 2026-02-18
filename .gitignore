@@ -1,4 +1,8 @@
 .env
+.env.local
 __pycache__/
 *.pyc
-config/agent_stack.json
+.DS_Store
+venv/
+.venv/
+logs/

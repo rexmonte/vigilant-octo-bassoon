@@ -1,76 +1,106 @@
-# OpenClaw / ACE Mac mini One-Shot Setup
+# ACE Migration Runtime (Pi ➜ M4 Mac mini)
 
-This project is now focused on **getting you stable fast** on your new **Mac mini M4 (32GB RAM)** with minimal troubleshooting.
+This project now provides a production-oriented **model routing + fallback policy** for your migration with explicit support for:
 
-If your bot keeps dropping with errors like:
+- ACE primary on `claude-opus-4.6`
+- ACE optional swap to `claude-sonnet-4.6`
+- Worker-first local models via Ollama
+- Open Fall protocol: **degrade → log → notify**
 
-- `HTTP 404: model 'glm-4.7-flash' not found`
+## Why this fixes your current instability
 
-this setup gives you guardrails, fallback routing, and a practical architecture for multi-agents.
+The repeated Discord error (`HTTP 404: model 'glm-4.7-flash' not found`) usually means a model ID/provider mismatch. This runtime prevents bad model IDs from being used at runtime by resolving through a strict catalog and role-specific fallback chains.
 
-## Recommended architecture (simple + reliable)
+## Architecture (recommended)
 
-- **ACE (head/orchestrator):** Anthropic API (`claude-3-7-sonnet-latest`)
-- **Worker agents:** local models via Ollama (`qwen2.5:7b-instruct` default)
-- **Fallback chain:** Anthropic Haiku ➜ local `llama3.1:8b`
-- **Routing by task:** configured in `config/agent_stack.json`
+- **ACE role**
+  - Primary: `anthropic/claude-opus-4.6`
+  - Fallback 1: `anthropic/claude-sonnet-4.6`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
+  - Fallback 3: `ollama/llama-4-8b-instruct`
+- **Worker role**
+  - Primary: `ollama/llama-4-8b-instruct`
+  - Fallback 1: `ollama/mistral-small`
+  - Fallback 2: `anthropic/claude-haiku-4.5`
 
-This gives you strong reasoning at the top and low-cost local throughput for supporting agents.
+All role routing is defined in `config/providers.json`.
 
-## One-shot bootstrap
+## Quick start
 
-Run:
-
-```bash
-python3 scripts/bootstrap_mac_mini.py
-```
-
-This will:
-
-1. Create `.env` from `.env.example` if missing.
-2. Create `config/agent_stack.json` from template if missing.
-3. Check core dependencies (`python3`, `git`, `ollama`).
-4. Show your recommended runtime routing.
-
-## Then do these 4 steps
-
-1. Add your API keys in `.env`.
-2. Start local runtime (`ollama serve`).
-3. Pull a local model (`ollama pull qwen2.5:7b-instruct`).
-4. Run the health check:
+1. Copy environment template:
 
 ```bash
-python3 scripts/healthcheck.py
+cp .env.example .env
 ```
 
-## Key files
+2. Fill at least:
 
-- `config/providers.json` — provider/model catalog, aliases, defaults, fallback order
-- `config/agent_stack.example.json` — recommended multi-agent architecture for your hardware
-- `src/model_router.py` — strict resolver used before each LLM API call
-- `scripts/bootstrap_mac_mini.py` — one-shot machine bootstrap helper
-- `scripts/healthcheck.py` — operational validation to avoid surprises
+- `ANTHROPIC_API_KEY`
+- `LOCAL_OPENAI_BASE_URL` (default points to local Ollama)
 
-## Integration into your Discord bot
+3. Run preflight:
+
+```bash
+python3 scripts/resolve_model.py --preflight
+```
+
+4. Resolve ACE role:
+
+```bash
+python3 scripts/resolve_model.py --role ace
+```
+
+5. Resolve worker role:
+
+```bash
+python3 scripts/resolve_model.py --role worker
+```
+
+## Docker runtime for local fallback
+
+Start local services:
+
+```bash
+docker compose up -d
+```
+
+Then pull a model into Ollama (example):
+
+```bash
+docker exec -it ace-ollama ollama pull llama-4-8b-instruct
+```
+
+## Start ACE in Discord chat
+
+After your `.env` is configured, run:
+
+```bash
+python3 scripts/run_discord_bot.py
+```
+
+By default, ACE responds when mentioned in a channel (`@YourBotName ...`).
+
+Optional Discord controls:
+
+- `ACE_ALLOWED_CHANNEL_IDS=123,456` to allow responses in specific channels without mention
+- `ACE_RESPOND_IN_ALL_CHANNELS=true` to answer in every channel the bot can read
+
+> Note: `scripts/preflight.py` validates API credentials for Anthropic/Google/Discord Bot token.
+> `scripts/resolve_model.py --preflight` validates model-router env wiring and role routing.
+
+## Integration point in your bot
 
 Before every LLM call:
 
-1. Resolve provider/model via `resolve_runtime_model()`.
-2. Call the matching API client.
-3. If chosen model is unavailable, resolver auto-falls back.
-4. Log provider/model used for observability.
+1. Resolve role model via `resolve_runtime_model(role="ace")` or `resolve_runtime_model(role="worker")`.
+2. Call the chosen provider/model.
+3. On upstream failure, re-resolve and route to fallback.
+4. If all fail, execute Open Fall protocol (degrade queue, log, Discord webhook alert).
 
-Example:
+## Files
 
-```python
-from src.model_router import resolve_runtime_model
-
-choice = resolve_runtime_model(requested_model="ace-primary")
-# use choice.provider and choice.model in your client
-```
-
-## Why this is better than hardcoding a model string
-
-Hardcoded model names break migrations. This setup centralizes model policy, enables fallback, and gives you quick diagnostics before production calls.
-
-For your specific failure (`glm-4.7-flash` 404), the resolver now shifts to healthy configured models instead of letting ACE crash.
+- `src/model_router.py`: role-aware resolver + environment preflight
+- `scripts/resolve_model.py`: CLI for resolution/preflight
+- `config/providers.json`: provider catalog + role routing + Open Fall settings
+- `docker-compose.yml`: Ollama + Qdrant baseline stack for macOS
+- `.env.example`: minimal env template
