@@ -1,10 +1,8 @@
-# Secrets
 .env
-
-# Python
+.env.local
 __pycache__/
 *.pyc
-.venv/
-
-# macOS
 .DS_Store
+venv/
+.venv/
+logs/

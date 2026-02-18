@@ -2,8 +2,7 @@
   "providers": {
     "anthropic": {
       "enabled": true,
-      "api": "anthropic-messages",
-      "auth_env": ["ANTHROPIC_TOKEN"],
+      "auth_env": "ANTHROPIC_SESSION_TOKEN",
       "models": [
         "claude-opus-4-6",
         "claude-sonnet-4",
@@ -12,19 +11,19 @@
     },
     "google": {
       "enabled": true,
-      "api": "google-generative-ai",
-      "auth_env": ["GOOGLE_API_KEY"],
+      "auth_env": "GOOGLE_API_KEY",
       "models": [
         "gemini-2.5-pro"
       ]
     },
     "ollama": {
       "enabled": true,
-      "api": "openai-chat-completions",
       "base_url_env": "OLLAMA_BASE_URL",
       "models": [
         "qwen3:14b",
         "qwen2.5-coder:14b",
+        "mistral-7b",
+        "llama2:13b",
         "qwen3-30b-a3b",
         "gemma3-27b"
       ]
@@ -32,7 +31,6 @@
   },
   "roles": {
     "ace": {
-      "description": "Main orchestrator agent",
       "primary": {"provider": "anthropic", "model": "claude-opus-4-6"},
       "fallbacks": [
         {"provider": "anthropic", "model": "claude-sonnet-4"},
@@ -41,14 +39,26 @@
       ]
     },
     "worker": {
-      "description": "Subordinate worker agents",
       "primary": {"provider": "ollama", "model": "qwen3:14b"},
       "fallbacks": [
         {"provider": "ollama", "model": "qwen2.5-coder:14b"},
+        {"provider": "ollama", "model": "mistral-7b"},
+        {"provider": "ollama", "model": "llama2:13b"},
         {"provider": "google", "model": "gemini-2.5-pro"},
         {"provider": "anthropic", "model": "claude-haiku-4-5"}
       ]
     }
+  },
+  "open_fall": {
+    "on_total_failure": [
+      "send_discord_alert",
+      "pause_queue",
+      "log_to_file"
+    ],
+    "upgrade_path": [
+      "qwen3-30b-a3b",
+      "gemma3-27b"
+    ]
   },
   "defaults": {
     "role": "ace"
