@@ -1,0 +1,41 @@
+{
+  "providers": {
+    "anthropic": {
+      "models": [
+        "claude-3-5-sonnet-latest",
+        "claude-3-7-sonnet-latest",
+        "claude-3-5-haiku-latest"
+      ],
+      "enabled": true
+    },
+    "openai_local": {
+      "models": [
+        "llama3.1:8b",
+        "qwen2.5:7b-instruct",
+        "mistral:7b"
+      ],
+      "enabled": true
+    },
+    "zhipu": {
+      "models": [
+        "glm-4.6",
+        "glm-4.5-air"
+      ],
+      "enabled": false
+    }
+  },
+  "defaults": {
+    "provider": "anthropic",
+    "model": "claude-3-7-sonnet-latest"
+  },
+  "fallback_order": [
+    {
+      "provider": "anthropic",
+      "model": "claude-3-5-haiku-latest"
+    },
+    {
+      "provider": "openai_local",
+      "model": "llama3.1:8b"
+    }
+  ]
+}
